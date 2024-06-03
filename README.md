@@ -20,6 +20,9 @@ All resources created by given yamls use `monitoring` namespace.
 ```shell
 kubectl apply -f ./conntrack-metrics.yaml
 ```
+If your service subnet is different from the default `10.96.0.0/16`, change `-svc-subnet=` parameter 
+in the [conntrack-metrics.yaml](./conntrack-metrics.yaml) file.
+
 To see which metrics are exposed, `curl <node-ip>:9000/metrics`.
 
 This DaemonSet tweaks the following flags on every node:
@@ -89,3 +92,10 @@ Finished 16021 requests
 ```
 
 For more configurable workloads, see [./workload](./workload) directory.
+
+## Check the results
+
+After some connections to the service subnet are done (may take ~120 seconds for TCP connections to be reported via metrics)
+you can check the results in the grafana dashboard. It should look something like this.
+
+![image](grafana_screenshot.png)
