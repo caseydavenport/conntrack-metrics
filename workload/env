@@ -10,6 +10,6 @@ CONN_PER_CLIENT=15000
 CLIENT_CONCURRENCY=100
 # after everything is done, wait for JOB_PAUSE before cleaning up.
 # may be useful to check some metrics after the test is done or for debugging.
-JOB_PAUSE=5m
+JOB_PAUSE=200m
 
 set +a

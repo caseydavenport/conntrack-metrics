@@ -20,6 +20,7 @@ spec:
         args:
           - netexec
           - --http-port=80
+          - --udp-port=81
 ---
 apiVersion: v1
 kind: Service
@@ -33,3 +34,8 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: 80
+      name: tcp
+    - protocol: UDP
+      port: 81
+      targetPort: 81
+      name: udp

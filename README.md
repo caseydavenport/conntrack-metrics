@@ -63,7 +63,7 @@ To see useful data, we need to create lots of svc connections, here is one way t
 kubectl apply -f backend.yaml
 ```
 
-2. Use the ClusterIP the Service and not depend on DNS since we just want to test the IP traffic
+2. Use the ClusterIP of the Service and do not depend on DNS since we just want to test the IP traffic
 
 ```
 kubectl get service
@@ -74,7 +74,7 @@ test-service   ClusterIP   10.96.0.23   <none>        80/TCP    13m
 
 In this case is `10.96.0.23`
 
-3. We can do manual tests just running an httpd:2 container
+3. We can do manual tests by just running an httpd:2 container
 
 ```
 kubectl run ab1 --image httpd:2

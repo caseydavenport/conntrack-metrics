@@ -28,7 +28,6 @@ spec:
             - -exclude-subnet=10.96.0.0/24
             - -node-name=$(NODE_NAME)
             - -metrics-bind-address=0.0.0.0:9000
-#            - -print-measurements
 #            - -print-events
           env:
             - name: NODE_NAME
@@ -36,7 +35,7 @@ spec:
                 fieldRef:
                   apiVersion: v1
                   fieldPath: spec.nodeName
-          image: quay.io/npinaeva/conntrack-metrics:v2
+          image: quay.io/npinaeva/conntrack-metrics:v1
           imagePullPolicy: Always
           name: conntrack-metrics
           securityContext:

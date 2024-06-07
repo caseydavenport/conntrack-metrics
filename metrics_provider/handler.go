@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -39,28 +38,26 @@ func printEvent(event *conntrack.Event) {
 }
 
 type EventsHandler struct {
-	svcSubnet         netip.Prefix
-	excludeSubnet     *netip.Prefix
-	nodeName          string
-	printMeasurements bool
-	printEvents       bool
-	events            sync.Map
-	workers           []*worker
+	svcSubnet     netip.Prefix
+	excludeSubnet *netip.Prefix
+	nodeName      string
+	printEvents   bool
+	events        sync.Map
+	workers       []*worker
 }
 
-func NewEventsHandler(svcSubnet netip.Prefix, excludeSubnet *netip.Prefix, nodeName string, printMeasurements bool, printEvents bool) *EventsHandler {
+func NewEventsHandler(svcSubnet netip.Prefix, excludeSubnet *netip.Prefix, nodeName string, printEvents bool) *EventsHandler {
 	return &EventsHandler{
-		svcSubnet:         svcSubnet,
-		excludeSubnet:     excludeSubnet,
-		nodeName:          nodeName,
-		printMeasurements: printMeasurements,
-		printEvents:       printEvents,
+		svcSubnet:     svcSubnet,
+		excludeSubnet: excludeSubnet,
+		nodeName:      nodeName,
+		printEvents:   printEvents,
 	}
 }
 
 func (h *EventsHandler) Start(ctx context.Context, nDispatchers, nWorkers, workerQueueSize int, c chan *TsMsgs) {
 	for i := 0; i < nWorkers; i++ {
-		w := newWorker(h.nodeName, h.printMeasurements, h.printEvents, workerQueueSize)
+		w := newWorker(h.nodeName, h.printEvents, workerQueueSize)
 		h.workers = append(h.workers, w)
 		go w.Start(ctx, i)
 		go w.StartWaitQueue(ctx)
@@ -72,34 +69,6 @@ func (h *EventsHandler) Start(ctx context.Context, nDispatchers, nWorkers, worke
 		go h.dispatch(ctx, c, i)
 	}
 	log.Printf("%d event queue dispatchers started\n", nDispatchers)
-}
-
-func (h *EventsHandler) printEventsStats(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			fmt.Println("Events stats:")
-			res := map[string]int64{}
-			h.events.Range(func(key, value interface{}) bool {
-				res[key.(string)] = value.(*atomic.Int64).Load()
-				return true
-			})
-			keys := make([]string, 0, len(res))
-			for k := range res {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-
-			for _, k := range keys {
-				fmt.Println("Event", k, "=", res[k])
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-
 }
 
 func (h *EventsHandler) dispatch(ctx context.Context, c chan *TsMsgs, id int) {
@@ -123,9 +92,9 @@ func (h *EventsHandler) dispatch(ctx context.Context, c chan *TsMsgs, id int) {
 						"Event %+v", netlinkMsg, err, event)
 					continue
 				}
-				if h.printEvents {
-					printEvent(event)
-				}
+				//if h.printEvents {
+				//	printEvent(event)
+				//}
 
 				if h.interestingEvent(event) {
 					// send same flow to the same queueNum to ensure correct events ordering
@@ -204,8 +173,9 @@ const (
 )
 
 type eventRecord struct {
-	ts    time.Time
-	event flowEvent
+	ts     time.Time
+	nonTCP bool
+	event  flowEvent
 	// for delete event
 	toSvcBytes, fromSvcBytes float64
 }
@@ -227,24 +197,22 @@ type flowInfo struct {
 }
 
 type worker struct {
-	nodeName          string
-	printMeasurements bool
-	printEvents       bool
-	flowInfos         map[uint32]*flowInfo
-	eventQueue        chan *tsConntrackEvent
-	readyFlows        chan uint32
-	waitQueue         chan uint32
+	nodeName    string
+	printEvents bool
+	flowInfos   map[uint32]*flowInfo
+	eventQueue  chan *tsConntrackEvent
+	readyFlows  chan uint32
+	waitQueue   chan uint32
 }
 
-func newWorker(nodeName string, printMeasurements bool, printEvents bool, workerQueueSize int) *worker {
+func newWorker(nodeName string, printEvents bool, workerQueueSize int) *worker {
 	return &worker{
-		nodeName:          nodeName,
-		printMeasurements: printMeasurements,
-		printEvents:       printEvents,
-		flowInfos:         map[uint32]*flowInfo{},
-		eventQueue:        make(chan *tsConntrackEvent, workerQueueSize),
-		readyFlows:        make(chan uint32, workerQueueSize),
-		waitQueue:         make(chan uint32, workerQueueSize),
+		nodeName:    nodeName,
+		printEvents: printEvents,
+		flowInfos:   map[uint32]*flowInfo{},
+		eventQueue:  make(chan *tsConntrackEvent, workerQueueSize),
+		readyFlows:  make(chan uint32, workerQueueSize),
+		waitQueue:   make(chan uint32, workerQueueSize),
 	}
 }
 
@@ -329,11 +297,11 @@ func (w *worker) handleConntrackEvent(event *tsConntrackEvent) {
 	}
 	if event.event.Type == conntrack.EventUpdate {
 		tcpState := getTCPState(flow)
-		// TODO implement seenReply for udp
-		if tcpState == 2 {
+		if tcpState == 2 || tcpState == 0 && event.event.Flow.Status.SeenReply() && !event.event.Flow.Status.Assured() {
 			fi.eventRecords = append(fi.eventRecords, &eventRecord{
-				ts:    event.ts,
-				event: seenReply,
+				ts:     event.ts,
+				event:  seenReply,
+				nonTCP: tcpState == 0,
 			})
 		}
 		if tcpState == 4 {
@@ -345,6 +313,28 @@ func (w *worker) handleConntrackEvent(event *tsConntrackEvent) {
 	}
 }
 
+func correctNonTCPEvents(events []*eventRecord) bool {
+	return len(events) > 2 && events[0].event == created && events[1].event == seenReply && events[1].nonTCP == true && events[2].event == deleted
+}
+
+// return correct, tcpFinIdx, deleteIdx
+func correctTCPEvents(events []*eventRecord) (bool, int, int) {
+	correct := len(events) > 3 && events[0].event == created && events[1].event == seenReply &&
+		(events[2].event == tcpFin && events[3].event == deleted ||
+			events[3].event == tcpFin && events[2].event == deleted)
+	if !correct {
+		return false, -1, -1
+	}
+	// tcpFin was recorded after kernel delete timestamp, may happen because of delay
+	tcpFinIdx := 2
+	deleteIdx := 3
+	if events[3].event == tcpFin && events[2].event == deleted {
+		tcpFinIdx = 3
+		deleteIdx = 2
+	}
+	return true, tcpFinIdx, deleteIdx
+}
+
 func (w *worker) recordMetrics(flowID uint32) {
 	fi, ok := w.flowInfos[flowID]
 	if !ok {
@@ -354,7 +344,8 @@ func (w *worker) recordMetrics(flowID uint32) {
 	sort.Slice(fi.eventRecords, func(i, j int) bool {
 		return fi.eventRecords[i].ts.Before(fi.eventRecords[j].ts)
 	})
-
+	//conntrack flows may be reused together with TCP/UDP ports, when there are many connections.
+	// As the result, we can have events for multiple flow "iterations" in the same flowInfo.
 	if fi.eventRecords[0].event != created {
 		// delete event wasn't received for the first flow iteration
 		log.Printf("no delete event for flow: \n%s", printEventRecords(fi.eventRecords))
@@ -365,17 +356,14 @@ func (w *worker) recordMetrics(flowID uint32) {
 			}
 		}
 	}
-	if len(fi.eventRecords) > 3 && fi.eventRecords[0].event == created && fi.eventRecords[1].event == seenReply &&
-		(fi.eventRecords[2].event == tcpFin && fi.eventRecords[3].event == deleted ||
-			fi.eventRecords[3].event == tcpFin && fi.eventRecords[2].event == deleted) {
-		// tcpFin was recorded after kernel delete timestamp, may happen because of delay
-		tcpFinIdx := 2
-		deleteIdx := 3
-		if fi.eventRecords[3].event == tcpFin && fi.eventRecords[2].event == deleted {
-			tcpFinIdx = 3
-			deleteIdx = 2
-		}
+	if correctNonTCPEvents(fi.eventRecords) {
+		// only seen_reply event is recorded for nonTCP
+		establishedLatency := fi.eventRecords[1].ts.Sub(fi.eventRecords[0].ts)
+		MetricSvcSeenReplyLatency.WithLabelValues(w.nodeName).Observe(establishedLatency.Seconds())
+		MetricSvcSeenReplyLatencySummary.WithLabelValues(w.nodeName).Observe(establishedLatency.Seconds())
 
+		fi.eventRecords = fi.eventRecords[3:]
+	} else if tcpEvents, tcpFinIdx, deleteIdx := correctTCPEvents(fi.eventRecords); tcpEvents {
 		establishedLatency := fi.eventRecords[1].ts.Sub(fi.eventRecords[0].ts)
 		MetricSvcSeenReplyLatency.WithLabelValues(w.nodeName).Observe(establishedLatency.Seconds())
 		MetricSvcSeenReplyLatencySummary.WithLabelValues(w.nodeName).Observe(establishedLatency.Seconds())
@@ -385,9 +373,9 @@ func (w *worker) recordMetrics(flowID uint32) {
 		MetricSvcTCPFinLatencySummary.WithLabelValues(w.nodeName).Observe(duration.Seconds())
 		MetricSvcTCPFinThroughput.WithLabelValues(w.nodeName, "to-svc").Observe(fi.eventRecords[deleteIdx].toSvcBytes / duration.Seconds())
 		MetricSvcTCPFinThroughput.WithLabelValues(w.nodeName, "from-svc").Observe(fi.eventRecords[deleteIdx].fromSvcBytes / duration.Seconds())
+
 		fi.eventRecords = fi.eventRecords[4:]
 	} else {
-		// check how much it's been since delete event
 		deletedIdx := -1
 		for i, er := range fi.eventRecords {
 			if er.event == deleted {
@@ -395,21 +383,11 @@ func (w *worker) recordMetrics(flowID uint32) {
 				break
 			}
 		}
-		if time.Since(fi.eventRecords[deletedIdx].ts) < time.Second {
-			// wait some more
-			log.Printf("WARNING: less than 1 secx since delete")
-			w.scheduleRecording(flowID)
-			return
-		}
-		if fi.eventRecords[0].event == created && fi.eventRecords[1].event == deleted {
-			//non-tcp flow
-			fi.eventRecords = fi.eventRecords[2:]
-		} else {
-			// some event is missing, clean up
-			log.Printf("events order is wrong: \n%s", printEventRecords(fi.eventRecords))
-			fi.eventRecords = fi.eventRecords[deletedIdx+1:]
-			MetricErrorCounter.WithLabelValues(w.nodeName, ErrorWrongEventsOrder).Inc()
-		}
+
+		// some event is missing, clean up first flow iteration events
+		log.Printf("events order is wrong: \n%s", printEventRecords(fi.eventRecords))
+		fi.eventRecords = fi.eventRecords[deletedIdx+1:]
+		MetricErrorCounter.WithLabelValues(w.nodeName, ErrorWrongEventsOrder).Inc()
 	}
 	if len(fi.eventRecords) == 0 {
 		delete(w.flowInfos, flowID)
@@ -417,6 +395,7 @@ func (w *worker) recordMetrics(flowID uint32) {
 	}
 }
 
+// 0 mean no-TCP, which is never received because we do not listen to new conntrack events
 func getTCPState(flow *conntrack.Flow) uint8 {
 	if flow.ProtoInfo.TCP == nil {
 		return 0

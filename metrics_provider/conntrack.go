@@ -56,8 +56,9 @@ func main() {
 	svcSubnet := flag.String("svc-subnet", "10.96.0.0/16", "service subnet is used to filter conntrack entries")
 	excludeSubnet := flag.String("exclude-subnet", "", "subnet of svc-subnet that should not be accounted for")
 	nodeName := flag.String("node-name", "", "node, in which this script is running")
+	//enableSummaries := flag.Bool("enable-summaries", false, "summaries are metrics that expose very precise quantiles, "+
+	//	"but they expire every 10 minutes. May be useful for benchmarking.")
 	metricsBindAddress := flag.String("metrics-bind-address", "", "metric bind address")
-	printMeasurements := flag.Bool("print-measurements", false, "print recorded measurements")
 	printEvents := flag.Bool("print-events", false, "print conntrack events")
 
 	flag.Parse()
@@ -88,7 +89,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := NewEventsHandler(svcPrefix, excludePrefix, *nodeName, *printMeasurements, *printEvents)
+	handler := NewEventsHandler(svcPrefix, excludePrefix, *nodeName, *printEvents)
 	handler.Start(ctx, 1, 5, 50000, reader.EventChan)
 	if err = reader.StartWorkers(ctx, 10); err != nil {
 		log.Println(err)
