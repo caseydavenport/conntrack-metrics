@@ -50,7 +50,7 @@ data:
     global:
       scrape_interval: 5s
       evaluation_interval: 5s
-    scrape_configs:    
+    scrape_configs:
       - job_name: 'kubernetes-pods'
         kubernetes_sd_configs:
         - role: pod
@@ -75,7 +75,7 @@ data:
         - source_labels: [__meta_kubernetes_pod_name]
           action: replace
           target_label: kubernetes_pod_name
-    
+
       - job_name: 'kubernetes-cadvisor'
         scheme: https
         tls_config:
@@ -93,6 +93,7 @@ data:
           regex: (.+)
           target_label: __metrics_path__
           replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+
       - job_name: 'kubernetes-nodes'
         scheme: https
         tls_config:
@@ -110,6 +111,7 @@ data:
           regex: (.+)
           target_label: __metrics_path__
           replacement: /api/v1/nodes/${1}/proxy/metrics
+
       - job_name: kube-proxy
         honor_labels: true
         kubernetes_sd_configs:
@@ -127,7 +129,18 @@ data:
           target_label: __address__
           regex: (.+?)(\\:\\d+)?
           replacement: $1:10249
----          
+
+      - job_name: 'felix_metrics'
+        scrape_interval: 5s
+        scheme: http
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_name]
+          regex: felix-metrics-svc
+          replacement: $1
+          action: keep
+---
 apiVersion: v1
 kind: Pod
 metadata:

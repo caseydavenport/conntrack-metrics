@@ -24,7 +24,7 @@ spec:
       containers:
         - command:
             - conntrack-metrics
-            - -svc-subnet=10.96.0.0/16
+            - -svc-subnet=10.96.0.0/12
             - -exclude-subnet=10.96.0.0/24
             - -node-name=$(NODE_NAME)
             - -metrics-bind-address=0.0.0.0:9000

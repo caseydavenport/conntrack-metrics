@@ -20,7 +20,7 @@ All resources created by given yamls use `monitoring` namespace.
 ```shell
 kubectl apply -f ./conntrack-metrics.yaml
 ```
-If your service subnet is different from the default `10.96.0.0/16`, change `-svc-subnet=` parameter 
+If your service subnet is different from the default `10.96.0.0/16`, change `-svc-subnet=` parameter
 in the [conntrack-metrics.yaml](./conntrack-metrics.yaml) file.
 
 To see which metrics are exposed, `curl <node-ip>:9000/metrics`.
@@ -36,8 +36,15 @@ kubectl apply -f ./monitoring.yaml
 ```
 
 If you want to enable kube-proxy metrics, run
+
 ```shell
 ./enable-kube-proxy-metrics.sh
+```
+
+If you want to enable Calico metrics:
+
+```shell
+./enable-calico-metrics.sh
 ```
 
 - prometheus GUI: `<node-ip>:30090`
@@ -45,9 +52,16 @@ If you want to enable kube-proxy metrics, run
 
 ### Create dashboard for conntrack metrics
 
+Port forward to Grafana
+
+```shell
+while true; do kubectl port-forward -n monitoring svc/grafana 3000; done
+```
+
 - Log into grafana
 - Left-side menu > Dashboards > Create Dashboard > Import Dashboard
   - Upload dashboard from [./dash.json](./dash.json)
+  - Upload dashboard from [./felix-dash.json](./felix-dash.json)
   - Choose Prometheus as data source
 
 The dashboard will reflect a connection after its conntrack flow is deleted, timeout for TCP is ~120 seconds,
